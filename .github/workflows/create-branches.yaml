@@ -16,6 +16,11 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.PRATHIC_GH_TOKEN }}
     steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRATHIC_GH_TOKEN }}
+          
       - name: Validate version
         shell: bash
         run: |
@@ -29,20 +34,62 @@ jobs:
       - name: Configure Git
         run: git config --global url."https://${{ secrets.PRATHIC_GH_TOKEN }}:@github.com".insteadOf "https://github.com"
 
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
       - name: Create release branch
         run: |
           git config user.name prathic-hashicorp
           git config user.email Prathic.sundararajan@hashicorp.com
           
           pbranch="release/vault-${{ inputs.version }}"
-          while read -r p; do
-            if [[ $(git ls-remote --exit-code --heads origin "$pbranch") ]]; then
-              echo "::notice::$pbranch already exists, skipping creation"
+          
+          # Read plugin names from plugins.yaml
+          plugins=$(yq eval 'keys | .[]' plugins.yaml)
+          
+          for plugin in $plugins; do
+            if [[ -z "$plugin" ]]; then
               continue
             fi
-            echo "::notice::Creating branch $pbranch for $p"
-              git checkout main
-              git pull
-              git checkout -b $pbranch
-              git push origin $pbranch
-          done < <(grep -v '^#' plugins.txt)
+            
+            echo "::notice::Processing plugin: $plugin"
+            
+            # Get the repository from the YAML file
+            repo=$(yq eval ".\"$plugin\".repository" plugins.yaml)
+            
+            # If repository is not specified or is null, use the plugin name as fallback
+            if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
+              repo="hashicorp/$plugin"
+            fi
+            
+            echo "::notice::Using repository: $repo"
+            
+            # Check if branch already exists in the remote repository
+            if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
+              echo "::notice::Branch $pbranch already exists in $repo, skipping creation"
+              continue
+            fi
+            
+            # Create a temporary directory for this plugin
+            temp_dir="temp_$(basename $repo)"
+            rm -rf "$temp_dir"
+            
+            echo "::notice::Cloning $repo repository"
+            git clone "https://github.com/$repo.git" "$temp_dir"
+            
+            cd "$temp_dir"
+            
+            echo "::notice::Creating branch $pbranch for $plugin (repo: $repo)"
+            git checkout main || git checkout master
+            git pull
+            git checkout -b "$pbranch"
+            git push origin "$pbranch"
+            
+            cd ..
+            rm -rf "$temp_dir"
+            
+            echo "::notice::Successfully created branch $pbranch in $repo"
+            
+          done

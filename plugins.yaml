@@ -1,0 +1,28 @@
+---
+# This file defines the release configuration for each Vault plugin. The syntax
+# is as follows:
+#
+#   <plugin-name>:
+#     enterprise: <boolean>
+#     binary-release: <boolean>
+#     repository: <string>
+#
+#     `enterprise`            - When set to true, this indicates that the plugin is
+#                               closed source and is only available with Vault Enterprise.
+#     `binary-release`        - When set to true, this indicates that the plugin
+#                               binary will be released on https://releases.hashicorp.com/.
+#     `repository` (optional) - When set, this is the GitHub repository from which the plugin
+#                               is built. If unset, the plugin name is used.
+
+# Enterprise-only plugins that release binaries
+#
+# These ent-only plugins have a license-enforcing mechanism in place
+# for publishing as an external plugin, so we can set binary-release: true.
+vault-plugin-1:
+  enterprise: true
+  binary-release: true
+  repository: prathic-hashicorp/vault-plugin-1
+vault-plugin-2:
+  enterprise: true
+  binary-release: true
+  repository: prathic-hashicorp/vault-plugin-2
