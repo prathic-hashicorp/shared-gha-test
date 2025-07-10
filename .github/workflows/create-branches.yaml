@@ -1,0 +1,48 @@
+name: Create release branches in plugins
+run-name: ${{ inputs.version }} release branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release branch version to create with *NO* "v", e.g., 1.19.x'
+        required: true
+        type: string
+
+
+jobs:
+  create-release-branches:
+    name: Create release branches
+    env:
+      GITHUB_TOKEN: ${{ secrets.PRATHIC_GH_TOKEN }}
+    steps:
+      - name: Validate version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          regex='^[0-9]+\.[0-9]+\.[0-9]+([^\ ]+)?$'
+          if ! [[ "${version}" =~ ${regex} ]]; then
+            echo "::error::Version '${version}' is invalid, must match the pattern '${regex}'"
+            exit 1
+          fi
+
+      - name: Configure Git
+        run: git config --global url."https://${{ secrets.PRATHIC_GH_TOKEN }}:@github.com".insteadOf "https://github.com"
+
+      - name: Create release branch
+        run: |
+          git config user.name prathic-hashicorp
+          git config user.email Prathic.sundararajan@hashicorp.com
+          
+          pbranch="release/vault-${{ inputs.version }}"
+          while read -r p; do
+            if [[ $(git ls-remote --exit-code --heads origin "$pbranch") ]]; then
+              echo "::notice::$pbranch already exists, skipping creation"
+              continue
+            fi
+            echo "::notice::Creating branch $pbranch for $p"
+              git checkout main
+              git pull
+              git checkout -b $pbranch
+              git push origin $pbranch
+          done < <(grep -v '^#' plugins.txt)
