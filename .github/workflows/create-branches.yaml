@@ -46,6 +46,7 @@ jobs:
           git config user.email Prathic.sundararajan@hashicorp.com
           
           pbranch="release/vault-${{ inputs.version }}"
+          plabel="backport/vault-${{ inputs.version }}"
           
           # Read plugin names from plugins.yaml
           plugins=$(yq eval 'keys | .[]' plugins.yaml)
@@ -92,5 +93,20 @@ jobs:
             rm -rf "$temp_dir"
             
             echo "::notice::Successfully created branch $pbranch in $repo"
+            
+            # Create label in the repository
+            echo "::notice::Creating label $plabel in $repo"
+            
+            # Check if label already exists using gh CLI
+            if gh label list --repo "$repo" --search "$plabel" | grep -q "$plabel"; then
+              echo "::notice::Label $plabel already exists in $repo, skipping creation"
+            else
+              # Create the label using gh CLI
+              if gh label create "$plabel" --repo "$repo" --description "Backport label for vault ${{ inputs.version }}" --color "0e8a16"; then
+                echo "::notice::Successfully created label $plabel in $repo"
+              else
+                echo "::warning::Failed to create label $plabel in $repo"
+              fi
+            fi
             
           done
