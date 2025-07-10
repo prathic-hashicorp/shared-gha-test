@@ -13,6 +13,7 @@ on:
 jobs:
   create-release-branches:
     name: Create release branches
+    runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.PRATHIC_GH_TOKEN }}
     steps:
