@@ -112,7 +112,7 @@ jobs:
 
             echo "::notice::Processing plugin: $plugin"
 
-            repo=$(yq eval "to_entries | map(select(.key | ascii_downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
+            repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
 
             # If repository is not specified or is null, use the plugin name as fallback
             if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
