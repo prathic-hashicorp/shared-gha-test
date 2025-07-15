@@ -8,7 +8,10 @@ on:
         description: 'Release branch version to create with *NO* "v", e.g., 1.19.x'
         required: true
         type: string
-
+      plugin_branch_shas:
+        description: 'Optional field to specify the specific git SHA to fork release branch from for each plugin. Default behavior will fork from the main branch of each plugin repo. Enter plugin-name:sha-value pairs separated by commas. Plugin name must match the keys exactly in plugins.yaml (e.g. vault-plugin-auth-oci:sha1, vault-plugin-auth-kubernetes:sha2).' 
+        required: false
+        type: string        
 
 jobs:
   create-release-branches:
@@ -32,6 +35,36 @@ jobs:
             exit 1
           fi
 
+      - name: Validate plugin_branch_shas format
+        shell: bash
+        run: |
+          plugin_shas="${{ inputs.plugin_branch_shas }}"
+          if [[ -n "$plugin_shas" ]]; then
+            regex='^[^:,]+:[^:,]+(,\s*[^:,]+:[^:,]+)*$'
+            if ! [[ "$plugin_shas" =~ $regex ]]; then
+              echo "::error::Invalid format. Expected: 'key1:value1, key2:value2'"
+              echo "::error::Received: '$plugin_shas'"
+              exit 1
+            fi
+
+            # Confirm plugin name exists in plugins.yaml (case-insensitive)            
+            valid_plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
+
+            raw_cleaned=$(echo "$plugin_shas" | sed 's/, */,/g')
+            IFS=',' read -ra PAIRS <<< "$raw_cleaned"
+
+            for pair in "${PAIRS[@]}"; do
+              key="${pair%%:*}"
+              key_lc=$(echo "$key" | awk '{print tolower($0)}')
+              if ! echo "$valid_plugins" | grep -qx "$key_lc"; then
+                echo "::error::Plugin '$key' does not exist in plugins.yaml (case-insensitive check)"
+                echo "::error::Valid plugins are:"
+                echo "$valid_plugins" | sed 's/^/::error::  - /'
+                exit 1
+              fi
+            done
+          fi
+
       - name: Configure Git
         run: git config --global url."https://${{ secrets.PRATHIC_GH_TOKEN }}:@github.com".insteadOf "https://github.com"
 
@@ -44,60 +77,91 @@ jobs:
         run: |
           git config user.name prathic-hashicorp
           git config user.email Prathic.sundararajan@hashicorp.com
-          
+
           pbranch="release/vault-${{ inputs.version }}"
           plabel="backport/vault-${{ inputs.version }}"
-          
-          # Read plugin names from plugins.yaml
-          plugins=$(yq eval 'keys | .[]' plugins.yaml)
-          
+
+          # Parse key-value pairs for plugin-specific git SHAs (lowercase keys)
+          declare -A plugin_shas
+          if [[ -n "${{ inputs.plugin_branch_shas }}" ]]; then
+            raw="${{ inputs.plugin_branch_shas }}"
+            # Remove spaces after commas
+            raw_cleaned=$(echo "$raw" | sed 's/, */,/g')
+
+            IFS=',' read -ra PAIRS <<< "$raw_cleaned"
+            for pair in "${PAIRS[@]}"; do
+              key="${pair%%:*}"
+              value="${pair#*:}"
+              key_lc=$(echo "$key" | awk '{print tolower($0)}')
+              if [[ -n "$key_lc" && -n "$value" && "$key_lc" != "$value" ]]; then
+                plugin_shas["$key_lc"]="$value"
+                echo "::notice::Plugin $key_lc will use SHA: $value"
+              else
+                echo "::warning::Invalid pair format: '$pair'"
+              fi
+            done
+          fi
+
+          # Go through all the plugins from plugins.yaml (lowercase keys)
+          plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
+
           for plugin in $plugins; do
             if [[ -z "$plugin" ]]; then
               continue
             fi
-            
+
             echo "::notice::Processing plugin: $plugin"
-            
-            # Get the repository from the YAML file
-            repo=$(yq eval ".\"$plugin\".repository" plugins.yaml)
-            
+
+            repo=$(yq eval "to_entries | map(select(.key | ascii_downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
+
             # If repository is not specified or is null, use the plugin name as fallback
             if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
               repo="hashicorp/$plugin"
             fi
-            
+
             echo "::notice::Using repository: $repo"
-            
+
             # Check if branch already exists in the remote repository
             if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
               echo "::notice::Branch $pbranch already exists in $repo, skipping creation"
               continue
             fi
             
-            # Create a temporary directory for this plugin
             temp_dir="temp_$(basename $repo)"
             rm -rf "$temp_dir"
-            
+
             echo "::notice::Cloning $repo repository"
-            git clone "https://github.com/$repo.git" "$temp_dir"
-            
+            git clone --depth 1 "https://github.com/$repo.git" "$temp_dir"
+
             cd "$temp_dir"
-            
+
+            # Pulling specific sha if specified 
+            if [[ -n "${plugin_shas[$plugin]}" ]]; then
+              target_sha="${plugin_shas[$plugin]}"
+              echo "::notice::Checking out specific SHA $target_sha for $plugin"
+
+              # For shallow clone, we need to fetch the specific commit
+              git fetch --depth 1 origin "$target_sha"
+              git checkout "$target_sha"
+            else
+              echo "::notice::Checking out default branch for $plugin"
+              git checkout main || git checkout master
+              git pull
+            fi
+
             echo "::notice::Creating branch $pbranch for $plugin (repo: $repo)"
-            git checkout main || git checkout master
-            git pull
             git checkout -b "$pbranch"
             git push origin "$pbranch"
-            
+
             cd ..
             rm -rf "$temp_dir"
-            
+
             echo "::notice::Successfully created branch $pbranch in $repo"
-            
+
             # Create label in the repository
             echo "::notice::Creating label $plabel in $repo"
-            
-            # Check if label already exists using gh CLI
+
+            # Check if label already exists
             if gh label list --repo "$repo" --search "$plabel" | grep -q "$plabel"; then
               echo "::notice::Label $plabel already exists in $repo, skipping creation"
             else
@@ -108,5 +172,4 @@ jobs:
                 echo "::warning::Failed to create label $plabel in $repo"
               fi
             fi
-            
           done
