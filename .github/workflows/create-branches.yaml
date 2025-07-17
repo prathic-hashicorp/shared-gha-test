@@ -137,7 +137,7 @@ jobs:
               echo "::notice::Checking out specific SHA $target_sha for $plugin"
 
               # For shallow clone, we need to fetch the specific commit
-              git fetch --depth 1 origin "$target_sha"
+              git fetch origin "$target_sha"
               git checkout "$target_sha"
             else
               echo "::notice::Checking out default branch for $plugin"
