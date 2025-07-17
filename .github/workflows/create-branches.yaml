@@ -35,7 +35,7 @@ jobs:
             exit 1
           fi
 
-      - name: Validate plugin_branch_shas format
+      - name: Validate plugin_branch_shas input
         shell: bash
         run: |
           plugin_shas="${{ inputs.plugin_branch_shas }}"
@@ -163,6 +163,8 @@ jobs:
             # Check if branch already exists in the remote repository
             if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
               echo "::notice::Branch $pbranch already exists in $repo, skipping creation"
+              cd ..
+              rm -rf "$temp_dir"
               continue
             fi
 
