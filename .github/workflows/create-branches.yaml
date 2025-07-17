@@ -116,7 +116,9 @@ jobs:
 
             # If repository is not specified or is null, use the plugin name as fallback
             if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
-              repo="hashicorp/$plugin"
+              repo="prathic-hashicorp/$plugin"
+            else
+              repo="prathic-hashicorp/$repo"
             fi
 
             echo "::notice::Using repository: $repo"

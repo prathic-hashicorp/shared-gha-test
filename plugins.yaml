@@ -21,8 +21,8 @@
 vault-plugin-1:
   enterprise: true
   binary-release: true
-  repository: prathic-hashicorp/vault-plugin-1
+  repository: vault-plugin-1
 vault-plugin-2:
   enterprise: true
   binary-release: true
-  repository: prathic-hashicorp/vault-plugin-2
+  repository: vault-plugin-2
