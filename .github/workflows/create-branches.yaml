@@ -41,8 +41,7 @@ jobs:
           plugin_shas="${{ inputs.plugin_branch_shas }}"
           if [[ -n "$plugin_shas" ]]; then
             # Regex: no spaces before/after key or value, no trailing spaces
-            # Regex: key can have spaces (but not leading/trailing), value is non-space/non-comma/non-colon, pairs comma-separated
-            regex='^[^:, ]+:[^:, ]+(,[^:, ]+:[^:, ]+)*$'
+            regex='^[^:,]+:[^:,]+(,[^:,]+:[^:,]+)*$'
             if ! [[ "$plugin_shas" =~ $regex ]]; then
               echo "::error::Invalid format. Expected: 'key1:value1,key2:value2'"
               echo "::error::Received: '$plugin_shas'"
@@ -52,9 +51,7 @@ jobs:
             # Confirm plugin name exists in plugins.yaml (case-insensitive)            
             valid_plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
 
-            raw_cleaned=$(echo "$plugin_shas" | sed 's/, */,/g')
-            IFS=',' read -ra PAIRS <<< "$raw_cleaned"
-
+            IFS=',' read -ra PAIRS <<< "$plugin_shas"
             for pair in "${PAIRS[@]}"; do
               key="${pair%%:*}"
               key_lc=$(echo "$key" | awk '{print tolower($0)}')
