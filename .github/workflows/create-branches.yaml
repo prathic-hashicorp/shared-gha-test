@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       plugin_branch_shas:
-        description: 'Optional field to specify the specific git SHA to fork release branch from for each plugin. Default behavior will fork from the main branch of each plugin repo. Enter plugin-name:sha-value pairs separated by commas. Plugin name must match the keys exactly in plugins.yaml (e.g. vault-plugin-auth-oci:sha1, vault-plugin-auth-kubernetes:sha2).' 
+        description: 'Optional: Specify git SHAs to fork from. Format: plugin1-name:sha1, plugin2-name:sha2, etc (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
         required: false
         type: string        
 
@@ -81,7 +81,7 @@ jobs:
           pbranch="release/vault-${{ inputs.version }}"
           plabel="backport/vault-${{ inputs.version }}"
 
-          # Parse key-value pairs for plugin-specific git SHAs (lowercase keys)
+          # Parse input key-value pairs for plugin-specific git SHAs (lowercase keys)
           declare -A plugin_shas
           if [[ -n "${{ inputs.plugin_branch_shas }}" ]]; then
             raw="${{ inputs.plugin_branch_shas }}"
