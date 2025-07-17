@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       plugin_branch_shas:
-        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1, plugin2-name:sha2, etc" (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
+        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly and no spaces in the string. Default behavior will fork from main.'              
         required: false
         type: string        
 
@@ -40,7 +40,9 @@ jobs:
         run: |
           plugin_shas="${{ inputs.plugin_branch_shas }}"
           if [[ -n "$plugin_shas" ]]; then
-            regex='^[^:,\s]+:[^:,\s]+(,\s*[^:,\s]+:[^:,\s]+)*$'
+            # Regex: no spaces before/after key or value, no trailing spaces
+            # Regex: key can have spaces (but not leading/trailing), value is non-space/non-comma/non-colon, pairs comma-separated
+            regex='^([^\s:,][^:,]*[^\s:,]):([^\s:,]+)(,([^\s:,][^:,]*[^\s:,]):([^\s:,]+))*$'
             if ! [[ "$plugin_shas" =~ $regex ]]; then
               echo "::error::Invalid format. Expected: 'key1:value1, key2:value2'"
               echo "::error::Received: '$plugin_shas'"
