@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       plugin_branch_shas:
-        description: 'Optional: Specify git SHAs to fork from. Format: plugin1-name:sha1, plugin2-name:sha2, etc (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
+        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1, plugin2-name:sha2, etc" (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
         required: false
         type: string        
 
@@ -29,7 +29,7 @@ jobs:
         shell: bash
         run: |
           version="${{ inputs.version }}"
-          regex='^[^:,\s]+:[^:,\s]+(,\s*[^:,\s]+:[^:,\s]+)*$'
+          regex='^[0-9]+\.[0-9]+\.([0-9]+|x)([^\ ]+)?$'
           if ! [[ "${version}" =~ ${regex} ]]; then
             echo "::error::Version '${version}' is invalid, must match the pattern '${regex}'"
             exit 1
@@ -40,7 +40,7 @@ jobs:
         run: |
           plugin_shas="${{ inputs.plugin_branch_shas }}"
           if [[ -n "$plugin_shas" ]]; then
-            regex='^[^:,]+:[^:,]+(,\s*[^:,]+:[^:,]+)*$'
+            regex='^[^:,\s]+:[^:,\s]+(,\s*[^:,\s]+:[^:,\s]+)*$'
             if ! [[ "$plugin_shas" =~ $regex ]]; then
               echo "::error::Invalid format. Expected: 'key1:value1, key2:value2'"
               echo "::error::Received: '$plugin_shas'"
