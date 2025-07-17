@@ -111,7 +111,7 @@ jobs:
             fi
 
             echo "::notice::Processing plugin: $plugin"
-
+            
             repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
 
             # If repository is not specified or is null, use the plugin name as fallback
@@ -120,13 +120,7 @@ jobs:
             fi
 
             echo "::notice::Using repository: $repo"
-
-            # Check if branch already exists in the remote repository
-            if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
-              echo "::notice::Branch $pbranch already exists in $repo, skipping creation"
-              continue
-            fi
-            
+           
             temp_dir="temp_$(basename $repo)"
             rm -rf "$temp_dir"
 
@@ -149,15 +143,6 @@ jobs:
               git pull
             fi
 
-            echo "::notice::Creating branch $pbranch for $plugin (repo: $repo)"
-            git checkout -b "$pbranch"
-            git push origin "$pbranch"
-
-            cd ..
-            rm -rf "$temp_dir"
-
-            echo "::notice::Successfully created branch $pbranch in $repo"
-
             # Create label in the repository
             echo "::notice::Creating label $plabel in $repo"
 
@@ -172,4 +157,20 @@ jobs:
                 echo "::warning::Failed to create label $plabel in $repo"
               fi
             fi
+
+            # Check if branch already exists in the remote repository
+            if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
+              echo "::notice::Branch $pbranch already exists in $repo, skipping creation"
+              continue
+            fi
+
+            echo "::notice::Creating branch $pbranch for $plugin (repo: $repo)"
+            git checkout -b "$pbranch"
+            git push origin "$pbranch"
+
+            cd ..
+            rm -rf "$temp_dir"
+
+            echo "::notice::Successfully created branch $pbranch in $repo"
+
           done
