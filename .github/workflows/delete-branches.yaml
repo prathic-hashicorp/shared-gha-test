@@ -1,20 +1,20 @@
-name: Delete release branches and labels in plugins
+name: Delete backport labels in plugins
 description: |
-  This workflow deletes release branches (release/vault-<version>) and backport labels (backport/vault-<version>) 
+  This workflow deletes backport labels (backport/vault-<version>) 
   for Vault plugins based on the specified version.
-run-name: Delete ${{ inputs.version }} release branches and labels
+run-name: Delete ${{ inputs.version }} backport labels
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release branch version to delete with *NO* "v", e.g., 1.19.x'
+        description: 'Backport label version to delete with *NO* "v", e.g., 1.19.x'
         required: true
         type: string
 
 jobs:
-  delete-release-branches:
-    name: Delete release branches and labels
+  delete-labels:
+    name: Delete backport labels
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.PRATHIC_GH_TOKEN }}
@@ -42,8 +42,7 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Delete labels in repositories
-        id: labels
+      - name: Delete Labels
         run: |
           plabel="backport/vault-${{ inputs.version }}"
 
@@ -87,126 +86,36 @@ jobs:
             fi
           done
 
-          # Save results to step outputs
-          echo "deleted_labels=${deleted_labels[*]}" >> $GITHUB_OUTPUT
-          echo "skipped_labels=${skipped_labels[*]}" >> $GITHUB_OUTPUT
-          echo "failed_labels=${failed_labels[*]}" >> $GITHUB_OUTPUT
-
-      - name: Delete release branches
-        id: branches
-        run: |
-          git config user.name prathic-hashicorp
-          git config user.email prathic.sundararajan@hashicorp.com
-
-          pbranch="release/vault-${{ inputs.version }}"
-
-          # Initialize arrays to track branch results
-          deleted_branches=()
-          skipped_branches=()
-          failed_branches=()
-
-          # Go through all the plugins from plugins.yaml (lowercase keys)
-          plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
-
-          for plugin in $plugins; do
-            if [[ -z "$plugin" ]]; then
-              continue
-            fi
-
-            echo "::debug::Processing plugin for branch deletion: $plugin"
-            
-            repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
-
-            # If repository is not specified or is null, use the plugin name as fallback
-            if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
-              repo="prathic-hashicorp/$plugin"
-            else
-              repo="prathic-hashicorp/$repo"
-            fi
-
-            echo "::debug::Using repository: $repo"
-
-            # Check if branch exists in the remote repository first
-            if ! git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
-              skipped_branches+=("$repo")
-              continue
-            fi
-
-            echo "::debug::Deleting branch $pbranch for $plugin (repo: $repo)"
-            
-            # Delete the branch using gh CLI (more reliable than git push --delete)
-            if gh api --method DELETE "/repos/$repo/git/refs/heads/$pbranch"; then
-              deleted_branches+=("$repo")
-            else
-              echo "::error::Branch deletion failed for repository $repo"
-              failed_branches+=("$repo")
-            fi
-          done
-
-          # Save branch results to step outputs
-          echo "deleted_branches=${deleted_branches[*]}" >> $GITHUB_OUTPUT
-          echo "skipped_branches=${skipped_branches[*]}" >> $GITHUB_OUTPUT
-          echo "failed_branches=${failed_branches[*]}" >> $GITHUB_OUTPUT
-
-          # Exit with error if there were any failures
-          if [[ ${#failed_branches[@]} -gt 0 ]]; then
-            echo "::error::Some branch deletion operations failed. Check the summary below."
-            exit 1
-          fi
-
-      - name: Generate summary report
-        if: always()
-        run: |
-          # Read results from previous step outputs
-          IFS=' ' read -ra deleted_labels <<< "${{ steps.labels.outputs.deleted_labels }}"
-          IFS=' ' read -ra skipped_labels <<< "${{ steps.labels.outputs.skipped_labels }}"
-          IFS=' ' read -ra failed_labels <<< "${{ steps.labels.outputs.failed_labels }}"
-          IFS=' ' read -ra deleted_branches <<< "${{ steps.branches.outputs.deleted_branches }}"
-          IFS=' ' read -ra skipped_branches <<< "${{ steps.branches.outputs.skipped_branches }}"
-          IFS=' ' read -ra failed_branches <<< "${{ steps.branches.outputs.failed_branches }}"
-
           # Simple summary report
-          echo "# Deletion Summary for vault-${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "# Label Deletion Summary for vault-${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Create a simple table
-          echo "| Repository | Labels | Branches |" >> $GITHUB_STEP_SUMMARY
-          echo "|------------|--------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
           
-          # Create status maps
-          declare -A label_status_map
-          declare -A branch_status_map
-          
-          # Populate status maps
-          for repo in "${deleted_labels[@]}"; do
-            label_status_map["$repo"]="✅ Deleted"
-          done
-          for repo in "${skipped_labels[@]}"; do
-            label_status_map["$repo"]="⏭️ Not Found"
-          done
-          for repo in "${failed_labels[@]}"; do
-            label_status_map["$repo"]="❌ Failed"
-          done
-          
-          for repo in "${deleted_branches[@]}"; do
-            branch_status_map["$repo"]="✅ Deleted"
-          done
-          for repo in "${skipped_branches[@]}"; do
-            branch_status_map["$repo"]="⏭️ Not Found"
-          done
-          for repo in "${failed_branches[@]}"; do
-            branch_status_map["$repo"]="❌ Failed"
-          done
-          
-          # Get all unique repositories
-          all_repos=($(printf '%s\n' "${deleted_labels[@]}" "${skipped_labels[@]}" "${failed_labels[@]}" "${deleted_branches[@]}" "${skipped_branches[@]}" "${failed_branches[@]}" | sort -u))
+          # Get all unique repositories and their status
+          all_repos=($(printf '%s\n' "${deleted_labels[@]}" "${skipped_labels[@]}" "${failed_labels[@]}" | sort -u))
           
           # Generate table rows
           for repo in "${all_repos[@]}"; do
             if [[ -n "$repo" ]]; then
-              label_status="${label_status_map[$repo]:-❓ Unknown}"
-              branch_status="${branch_status_map[$repo]:-❓ Unknown}"
-              echo "| \`$repo\` | $label_status | $branch_status |" >> $GITHUB_STEP_SUMMARY
+              if [[ " ${deleted_labels[*]} " =~ " $repo " ]]; then
+                status="✅ Deleted"
+              elif [[ " ${skipped_labels[*]} " =~ " $repo " ]]; then
+                status="⏭️ Not Found"
+              elif [[ " ${failed_labels[*]} " =~ " $repo " ]]; then
+                status="❌ Failed"
+              else
+                status="❓ Unknown"
+              fi
+              echo "| \`$repo\` | $status |" >> $GITHUB_STEP_SUMMARY
             fi
           done
           echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Exit with error if there were any failures
+          if [[ ${#failed_labels[@]} -gt 0 ]]; then
+            echo "::error::Some label deletion operations failed. Check the summary above."
+            exit 1
+          fi
