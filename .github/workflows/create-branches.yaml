@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       plugin_branch_shas:
-        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
+        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly and no spacesin the string. Default behavior will fork from main.'              
         required: false
         type: string        
 
@@ -73,13 +73,93 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Create release branch
+      - name: Create labels in repositories
+        run: |
+          plabel="backport/vault-${{ inputs.version }}"
+
+          # Initialize arrays to track results
+          created_labels=()
+          skipped_labels=()
+          failed_labels=()
+
+          # Go through all the plugins from plugins.yaml (lowercase keys)
+          plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
+
+          for plugin in $plugins; do
+            if [[ -z "$plugin" ]]; then
+              continue
+            fi
+
+            echo "::debug::Processing plugin for label creation: $plugin"
+            
+            repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
+
+            # If repository is not specified or is null, use the plugin name as fallback
+            if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
+              repo="prathic-hashicorp/$plugin"
+            else
+              repo="prathic-hashicorp/$repo"
+            fi
+
+            echo "::debug::Creating label in repository: $repo"
+
+            # Check if label already exists
+            if gh label list --repo "$repo" --search "$plabel" | grep -q "$plabel"; then
+              skipped_labels+=("$repo")
+            else
+              # Create the label using gh CLI
+              if gh label create "$plabel" --repo "$repo" --description "Backport label for vault ${{ inputs.version }}" --color "0e8a16"; then
+                created_labels+=("$repo")
+              else
+                failed_labels+=("$repo")
+              fi
+            fi
+          done
+
+          # Generate GitHub Job Summary for labels
+          echo "# Label Creation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Successfully Created Labels (${#created_labels[@]})" >> $GITHUB_STEP_SUMMARY
+          if [[ ${#created_labels[@]} -gt 0 ]]; then
+            for repo in "${created_labels[@]}"; do
+              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "_No labels were created._" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## ⏭️ Skipped Labels (${#skipped_labels[@]})" >> $GITHUB_STEP_SUMMARY
+          if [[ ${#skipped_labels[@]} -gt 0 ]]; then
+            for repo in "${skipped_labels[@]}"; do
+              echo "- \`$repo\` (already exists)" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "_No labels were skipped._" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## ❌ Failed Labels (${#failed_labels[@]})" >> $GITHUB_STEP_SUMMARY
+          if [[ ${#failed_labels[@]} -gt 0 ]]; then
+            for repo in "${failed_labels[@]}"; do
+              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "_No label creation failures._" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create release branches
         run: |
           git config user.name prathic-hashicorp
           git config user.email prathic.sundararajan@hashicorp.com
 
           pbranch="release/vault-${{ inputs.version }}"
-          plabel="backport/vault-${{ inputs.version }}"
+
+          # Initialize arrays to track results
+          created_branches=()
+          skipped_branches=()
+          failed_branches=()
 
           # Parse input key-value pairs for plugin-specific git SHAs (lowercase keys)
           declare -A plugin_shas
@@ -102,7 +182,7 @@ jobs:
               continue
             fi
 
-            echo "::debug::Processing plugin: $plugin"
+            echo "::debug::Processing plugin for branch creation: $plugin"
             
             repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
 
@@ -114,59 +194,96 @@ jobs:
             fi
 
             echo "::debug::Using repository: $repo"
+
+            # Check if branch already exists in the remote repository first
+            if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
+              skipped_branches+=("$repo")
+              continue
+            fi
            
             temp_dir="temp_$(basename $repo)"
             rm -rf "$temp_dir"
 
             echo "::debug::Cloning $repo repository"
-            git clone --depth 1 "https://github.com/$repo.git" "$temp_dir"
+            
+            # Use a flag to track if this iteration fails
+            branch_failed=false
+            
+            if ! git clone --depth 1 "https://github.com/$repo.git" "$temp_dir"; then
+              failed_branches+=("$repo (clone failed)")
+              continue
+            fi
 
             cd "$temp_dir"
 
             # Pulling specific sha if specified 
             if [[ -n "${plugin_shas[$plugin]}" ]]; then
               target_sha="${plugin_shas[$plugin]}"
-              echo "::notice::Checking out specific SHA $target_sha for $plugin"
+              echo "::debug::Checking out specific SHA $target_sha for $plugin"
 
               # Fetch the specific commit to ensure the SHA is reachable
-              git fetch origin "$target_sha"
-              git checkout "$target_sha"
+              if ! git fetch origin "$target_sha" || ! git checkout "$target_sha"; then
+                failed_branches+=("$repo (SHA checkout failed: $target_sha)")
+                cd ..
+                rm -rf "$temp_dir"
+                continue
+              fi
             else
               echo "::debug::Checking out default branch for $plugin"
-              git checkout main || git checkout master
-              git pull
-            fi
-
-            # Create label in the repository
-            echo "::notice::Creating label $plabel in $repo"
-
-            # Check if label already exists
-            if gh label list --repo "$repo" --search "$plabel" | grep -q "$plabel"; then
-              echo "::notice::Label $plabel already exists in $repo, skipping creation"
-            else
-              # Create the label using gh CLI
-              if gh label create "$plabel" --repo "$repo" --description "Backport label for vault ${{ inputs.version }}" --color "0e8a16"; then
-                echo "::notice::Successfully created label $plabel in $repo"
-              else
-                echo "::warning::Failed to create label $plabel in $repo"
+              if ! (git checkout main || git checkout master) || ! git pull; then
+                failed_branches+=("$repo (default branch checkout failed)")
+                cd ..
+                rm -rf "$temp_dir"
+                continue
               fi
             fi
 
-            # Check if branch already exists in the remote repository
-            if git ls-remote --exit-code --heads "https://github.com/$repo.git" "$pbranch" > /dev/null 2>&1; then
-              echo "::notice::Branch $pbranch already exists in $repo, skipping creation"
-              cd ..
-              rm -rf "$temp_dir"
-              continue
+            echo "::debug::Creating branch $pbranch for $plugin (repo: $repo)"
+            if git checkout -b "$pbranch" && git push origin "$pbranch"; then
+              created_branches+=("$repo")
+            else
+              failed_branches+=("$repo (branch creation/push failed)")
             fi
-
-            echo "::notice::Creating branch $pbranch for $plugin (repo: $repo)"
-            git checkout -b "$pbranch"
-            git push origin "$pbranch"
 
             cd ..
             rm -rf "$temp_dir"
-
-            echo "::notice::Successfully created branch $pbranch in $repo"
-
           done
+
+          # Generate GitHub Job Summary for branches
+          echo "# Branch Creation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Successfully Created Branches (${#created_branches[@]})" >> $GITHUB_STEP_SUMMARY
+          if [[ ${#created_branches[@]} -gt 0 ]]; then
+            for repo in "${created_branches[@]}"; do
+              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "_No branches were created._" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## ⏭️ Skipped Branches (${#skipped_branches[@]})" >> $GITHUB_STEP_SUMMARY
+          if [[ ${#skipped_branches[@]} -gt 0 ]]; then
+            for repo in "${skipped_branches[@]}"; do
+              echo "- \`$repo\` (already exists)" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "_No branches were skipped._" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## ❌ Failed Branches (${#failed_branches[@]})" >> $GITHUB_STEP_SUMMARY
+          if [[ ${#failed_branches[@]} -gt 0 ]]; then
+            for repo in "${failed_branches[@]}"; do
+              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "_No branch creation failures._" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Exit with error if there were any failures
+          if [[ ${#failed_branches[@]} -gt 0 ]]; then
+            echo "::error::Some branch operations failed. Check the summary above."
+            exit 1
+          fi
