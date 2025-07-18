@@ -131,7 +131,6 @@ jobs:
         run: |
           git config user.name prathic-hashicorp
           git config user.email prathic.sundararajan@hashicorp.com
-          git config advice.detachedHead false
 
           pbranch="release/vault-${{ inputs.version }}"
 
@@ -192,6 +191,9 @@ jobs:
             fi
 
             cd "$temp_dir"
+            
+            # Configure git to suppress verbose output
+            git config advice.detachedHead false
 
             # Use specific SHA if provided, otherwise use default branch
             if [[ -n "${plugin_shas[$plugin]}" ]]; then
