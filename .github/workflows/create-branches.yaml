@@ -41,7 +41,7 @@ jobs:
           plugin_shas="${{ inputs.plugin_branch_shas }}"
           if [[ -n "$plugin_shas" ]]; then
             # Regex: no spaces before/after key or value but spaces are allowed in the plugin name if needed
-            regex='^([^:, ]+):[^:, ]+(,([^:, ]+):[^:, ]+)*$'
+            regex='^([^:, ]+):[^:, ]+(, ?[^:, ]+:[^:, ]+)*$'
             if ! [[ "$plugin_shas" =~ $regex ]]; then
               echo "::error::Invalid format. Expected: 'key1:value1,key2:value2'"
               echo "::error::Received: '$plugin_shas'"
