@@ -1,4 +1,7 @@
 name: Create release branches in plugins
+description: |
+  This workflow creates release branches (release/vault-<version>) for Vault plugins based on the specified version. 
+  It also creates labels (backport/vault-<version>) in each plugin repository for the specified version.
 run-name: ${{ inputs.version }} release branch
 
 on:
@@ -9,7 +12,7 @@ on:
         required: true
         type: string
       plugin_branch_shas:
-        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly and no spacesin the string. Default behavior will fork from main.'              
+        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
         required: false
         type: string        
 
@@ -40,7 +43,7 @@ jobs:
         run: |
           plugin_shas="${{ inputs.plugin_branch_shas }}"
           if [[ -n "$plugin_shas" ]]; then
-            # Regex: no spaces before/after key or value but spaces are allowed in the plugin name if needed
+            # Validate format: plugin1:sha1,plugin2:sha2
             regex='^([^:, ]+):[^:, ]+(,([^:, ]+):[^:, ]+)*$'
             if ! [[ "$plugin_shas" =~ $regex ]]; then
               echo "::error::Invalid format. Expected: 'key1:value1,key2:value2'"
@@ -123,16 +126,12 @@ jobs:
           echo "failed_labels=${failed_labels[*]}" >> $GITHUB_OUTPUT
 
       - name: Create release branches
+        id: branches
         run: |
           git config user.name prathic-hashicorp
           git config user.email prathic.sundararajan@hashicorp.com
 
           pbranch="release/vault-${{ inputs.version }}"
-
-          # Read label results from previous step outputs
-          IFS=' ' read -ra created_labels <<< "${{ steps.labels.outputs.created_labels }}"
-          IFS=' ' read -ra skipped_labels <<< "${{ steps.labels.outputs.skipped_labels }}"
-          IFS=' ' read -ra failed_labels <<< "${{ steps.labels.outputs.failed_labels }}"
 
           # Initialize arrays to track branch results
           created_branches=()
@@ -142,14 +141,14 @@ jobs:
           # Parse input key-value pairs for plugin-specific git SHAs (lowercase keys)
           declare -A plugin_shas
           if [[ -n "${{ inputs.plugin_branch_shas }}" ]]; then
-          IFS=',' read -ra PAIRS <<< "${{ inputs.plugin_branch_shas }}"
-          for pair in "${PAIRS[@]}"; do
-            key="${pair%%:*}"
-            value="${pair#*:}"
-            key_lc=$(echo "$key" | awk '{print tolower($0)}')
-            plugin_shas["$key_lc"]="$value"
-            echo "::notice::Plugin $key_lc will use SHA: $value"
-          done
+            IFS=',' read -ra PAIRS <<< "${{ inputs.plugin_branch_shas }}"
+            for pair in "${PAIRS[@]}"; do
+              key="${pair%%:*}"
+              value="${pair#*:}"
+              key_lc=$(echo "$key" | awk '{print tolower($0)}')
+              plugin_shas["$key_lc"]="$value"
+              echo "::notice::Plugin $key_lc will use SHA: $value"
+            done
           fi
 
           # Go through all the plugins from plugins.yaml (lowercase keys)
@@ -178,7 +177,7 @@ jobs:
               skipped_branches+=("$repo")
               continue
             fi
-           
+
             temp_dir="temp_$(basename $repo)"
             rm -rf "$temp_dir"
 
@@ -191,7 +190,7 @@ jobs:
 
             cd "$temp_dir"
 
-            # Pulling specific sha if specified 
+            # Use specific SHA if provided, otherwise use default branch
             if [[ -n "${plugin_shas[$plugin]}" ]]; then
               target_sha="${plugin_shas[$plugin]}"
               echo "::debug::Checking out specific SHA $target_sha for $plugin"
@@ -223,6 +222,31 @@ jobs:
             cd ..
             rm -rf "$temp_dir"
           done
+
+          # Save branch results to step outputs
+          echo "created_branches=${created_branches[*]}" >> $GITHUB_OUTPUT
+          echo "skipped_branches=${skipped_branches[*]}" >> $GITHUB_OUTPUT
+          echo "failed_branches=${failed_branches[*]}" >> $GITHUB_OUTPUT
+
+          # Exit with error if there were any failures
+          if [[ ${#failed_branches[@]} -gt 0 ]]; then
+            echo "::error::Some branch operations failed. Check the summary below."
+            exit 1
+          fi
+
+      - name: Generate summary report
+        if: always()
+        run: |
+          # Read results from previous step outputs
+          IFS=' ' read -ra created_labels <<< "${{ steps.labels.outputs.created_labels }}"
+          IFS=' ' read -ra skipped_labels <<< "${{ steps.labels.outputs.skipped_labels }}"
+          IFS=' ' read -ra failed_labels <<< "${{ steps.labels.outputs.failed_labels }}"
+          IFS=' ' read -ra created_branches <<< "${{ steps.branches.outputs.created_branches }}"
+          IFS=' ' read -ra skipped_branches <<< "${{ steps.branches.outputs.skipped_branches }}"
+          IFS=' ' read -ra failed_branches <<< "${{ steps.branches.outputs.failed_branches }}"
+
+          # Get plugins list for table generation
+          plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
 
           # Combined summary table
           echo "# Release Branch and Label Creation Summary" >> $GITHUB_STEP_SUMMARY
@@ -277,9 +301,3 @@ jobs:
             echo "| \`$repo\` | $label_status | $branch_status |" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Exit with error if there were any failures
-          if [[ ${#failed_branches[@]} -gt 0 ]]; then
-            echo "::error::Some branch operations failed. Check the summary above."
-            exit 1
-          fi
