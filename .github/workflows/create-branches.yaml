@@ -284,9 +284,7 @@ jobs:
           for repo in "${skipped_branches[@]}"; do
             branch_status_map["$repo"]="⏭️ Skipped"
           done
-          for failed_item in "${failed_branches[@]}"; do
-            # Extract repo name (no need to parse since it's just the repo name now)
-            repo="$failed_item"
+          for repo in "${failed_branches[@]}"; do
             branch_status_map["$repo"]="❌ Failed"
           done
           
