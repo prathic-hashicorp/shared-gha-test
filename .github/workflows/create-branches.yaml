@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       plugin_branch_shas:
-        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly and no spaces in the string. Default behavior will fork from main.'              
+        description: 'Optional: Specify git SHAs to fork from. Format: "plugin1-name:sha1,plugin2-name:sha2,etc" (comma-separated). Plugin names must match plugins.yaml keys exactly. Default behavior will fork from main.'              
         required: false
         type: string        
 
@@ -21,7 +21,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.PRATHIC_GH_TOKEN }}
     steps:
       - name: Checkout current repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b  # v4.1.4
         with:
           token: ${{ secrets.PRATHIC_GH_TOKEN }}
           
@@ -40,8 +40,8 @@ jobs:
         run: |
           plugin_shas="${{ inputs.plugin_branch_shas }}"
           if [[ -n "$plugin_shas" ]]; then
-            # Regex: no spaces before/after key or value, no trailing spaces but spaces are allowed in the plugin name if it has a space
-            regex='^([^:, ]+( [^:, ]+)*):[^:, ]+(,([^:, ]+( [^:, ]+)*):[^:, ]+)*$'
+            # Regex: no spaces before/after key or value but spaces are allowed in the plugin name if needed
+            regex='^([^:, ]+):[^:, ]+(,([^:, ]+):[^:, ]+)*$'
             if ! [[ "$plugin_shas" =~ $regex ]]; then
               echo "::error::Invalid format. Expected: 'key1:value1,key2:value2'"
               echo "::error::Received: '$plugin_shas'"
@@ -52,6 +52,7 @@ jobs:
             valid_plugins=$(yq eval 'keys | .[]' plugins.yaml | awk '{print tolower($0)}')
 
             IFS=',' read -ra PAIRS <<< "$plugin_shas"
+
             for pair in "${PAIRS[@]}"; do
               key="${pair%%:*}"
               key_lc=$(echo "$key" | awk '{print tolower($0)}')
@@ -75,7 +76,7 @@ jobs:
       - name: Create release branch
         run: |
           git config user.name prathic-hashicorp
-          git config user.email Prathic.sundararajan@hashicorp.com
+          git config user.email prathic.sundararajan@hashicorp.com
 
           pbranch="release/vault-${{ inputs.version }}"
           plabel="backport/vault-${{ inputs.version }}"
@@ -83,22 +84,14 @@ jobs:
           # Parse input key-value pairs for plugin-specific git SHAs (lowercase keys)
           declare -A plugin_shas
           if [[ -n "${{ inputs.plugin_branch_shas }}" ]]; then
-            raw="${{ inputs.plugin_branch_shas }}"
-            # Remove spaces after commas
-            raw_cleaned=$(echo "$raw" | sed 's/, */,/g')
-
-            IFS=',' read -ra PAIRS <<< "$raw_cleaned"
-            for pair in "${PAIRS[@]}"; do
-              key="${pair%%:*}"
-              value="${pair#*:}"
-              key_lc=$(echo "$key" | awk '{print tolower($0)}')
-              if [[ -n "$key_lc" && -n "$value" && "$key_lc" != "$value" ]]; then
-                plugin_shas["$key_lc"]="$value"
-                echo "::notice::Plugin $key_lc will use SHA: $value"
-              else
-                echo "::warning::Invalid pair format: '$pair'"
-              fi
-            done
+          IFS=',' read -ra PAIRS <<< "${{ inputs.plugin_branch_shas }}"
+          for pair in "${PAIRS[@]}"; do
+            key="${pair%%:*}"
+            value="${pair#*:}"
+            key_lc=$(echo "$key" | awk '{print tolower($0)}')
+            plugin_shas["$key_lc"]="$value"
+            echo "::notice::Plugin $key_lc will use SHA: $value"
+          done
           fi
 
           # Go through all the plugins from plugins.yaml (lowercase keys)
@@ -109,7 +102,7 @@ jobs:
               continue
             fi
 
-            echo "::notice::Processing plugin: $plugin"
+            echo "::debug::Processing plugin: $plugin"
             
             repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
 
@@ -120,12 +113,12 @@ jobs:
               repo="prathic-hashicorp/$repo"
             fi
 
-            echo "::notice::Using repository: $repo"
+            echo "::debug::Using repository: $repo"
            
             temp_dir="temp_$(basename $repo)"
             rm -rf "$temp_dir"
 
-            echo "::notice::Cloning $repo repository"
+            echo "::debug::Cloning $repo repository"
             git clone --depth 1 "https://github.com/$repo.git" "$temp_dir"
 
             cd "$temp_dir"
@@ -135,11 +128,11 @@ jobs:
               target_sha="${plugin_shas[$plugin]}"
               echo "::notice::Checking out specific SHA $target_sha for $plugin"
 
-              # For shallow clone, we need to fetch the specific commit
+              # Fetch the specific commit to ensure the SHA is reachable
               git fetch origin "$target_sha"
               git checkout "$target_sha"
             else
-              echo "::notice::Checking out default branch for $plugin"
+              echo "::debug::Checking out default branch for $plugin"
               git checkout main || git checkout master
               git pull
             fi
