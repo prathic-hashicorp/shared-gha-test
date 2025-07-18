@@ -301,3 +301,25 @@ jobs:
             echo "| \`$repo\` | $label_status | $branch_status |" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Add detailed failure information if there are any failures
+          if [[ ${#failed_labels[@]} -gt 0 ]] || [[ ${#failed_branches[@]} -gt 0 ]]; then
+            echo "## Failure Details" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [[ ${#failed_labels[@]} -gt 0 ]]; then
+              echo "### Label Creation Failures:" >> $GITHUB_STEP_SUMMARY
+              for failed_label in "${failed_labels[@]}"; do
+                echo "- \`$failed_label\`: Label creation failed" >> $GITHUB_STEP_SUMMARY
+              done
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [[ ${#failed_branches[@]} -gt 0 ]]; then
+              echo "### Branch Creation Failures:" >> $GITHUB_STEP_SUMMARY
+              for failed_branch in "${failed_branches[@]}"; do
+                echo "- \`$failed_branch\`" >> $GITHUB_STEP_SUMMARY
+              done
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
