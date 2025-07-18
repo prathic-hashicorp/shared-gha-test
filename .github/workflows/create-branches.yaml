@@ -115,6 +115,7 @@ jobs:
               if gh label create "$plabel" --repo "$repo" --description "Backport label for vault ${{ inputs.version }}" --color "0e8a16"; then
                 created_labels+=("$repo")
               else
+                echo "::error::Label creation failed for repository $repo"
                 failed_labels+=("$repo")
               fi
             fi
@@ -184,7 +185,8 @@ jobs:
             echo "::debug::Cloning $repo repository"
             
             if ! git clone --depth 1 "https://github.com/$repo.git" "$temp_dir"; then
-              failed_branches+=("$repo (clone failed)")
+              echo "::error::Clone failed for repository $repo"
+              failed_branches+=("$repo")
               continue
             fi
 
@@ -197,7 +199,8 @@ jobs:
 
               # Fetch the specific commit to ensure the SHA is reachable
               if ! git fetch origin "$target_sha" || ! git checkout "$target_sha"; then
-                failed_branches+=("$repo (SHA checkout failed: $target_sha)")
+                echo "::error::SHA checkout failed for repository $repo (target SHA: $target_sha)"
+                failed_branches+=("$repo")
                 cd ..
                 rm -rf "$temp_dir"
                 continue
@@ -205,7 +208,8 @@ jobs:
             else
               echo "::debug::Checking out default branch for $plugin"
               if ! (git checkout main || git checkout master) || ! git pull; then
-                failed_branches+=("$repo (default branch checkout failed)")
+                echo "::error::Default branch checkout failed for repository $repo"
+                failed_branches+=("$repo")
                 cd ..
                 rm -rf "$temp_dir"
                 continue
@@ -216,7 +220,8 @@ jobs:
             if git checkout -b "$pbranch" && git push origin "$pbranch"; then
               created_branches+=("$repo")
             else
-              failed_branches+=("$repo (branch creation/push failed)")
+              echo "::error::Branch creation/push failed for repository $repo"
+              failed_branches+=("$repo")
             fi
 
             cd ..
@@ -277,8 +282,8 @@ jobs:
             branch_status_map["$repo"]="⏭️ Skipped"
           done
           for failed_item in "${failed_branches[@]}"; do
-            # Extract repo name (everything before the first space or parenthesis)
-            repo="${failed_item%% *}"
+            # Extract repo name (no need to parse since it's just the repo name now)
+            repo="$failed_item"
             branch_status_map["$repo"]="❌ Failed"
           done
           
@@ -310,7 +315,7 @@ jobs:
             if [[ ${#failed_labels[@]} -gt 0 ]]; then
               echo "### Label Creation Failures:" >> $GITHUB_STEP_SUMMARY
               for failed_label in "${failed_labels[@]}"; do
-                echo "- \`$failed_label\`: Label creation failed" >> $GITHUB_STEP_SUMMARY
+                echo "- \`$failed_label\`" >> $GITHUB_STEP_SUMMARY
               done
               echo "" >> $GITHUB_STEP_SUMMARY
             fi
