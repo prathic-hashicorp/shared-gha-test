@@ -220,7 +220,7 @@ jobs:
             fi
 
             echo "::debug::Creating branch $pbranch for $plugin (repo: $repo)"
-            if git checkout -b "$pbranch" && git push origin "$pbranch"; then
+            if git checkout -b "$pbranch" && git push origin "$pbranch" --quiet; then
               created_branches+=("$repo")
             else
               echo "::error::Branch creation/push failed for repository $repo"
