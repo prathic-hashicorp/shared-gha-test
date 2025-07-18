@@ -74,6 +74,7 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
 
       - name: Create labels in repositories
+        id: labels
         run: |
           plabel="backport/vault-${{ inputs.version }}"
 
@@ -116,38 +117,10 @@ jobs:
             fi
           done
 
-          # Generate GitHub Job Summary for labels
-          echo "# Label Creation Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## ✅ Successfully Created Labels (${#created_labels[@]})" >> $GITHUB_STEP_SUMMARY
-          if [[ ${#created_labels[@]} -gt 0 ]]; then
-            for repo in "${created_labels[@]}"; do
-              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "_No labels were created._" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "## ⏭️ Skipped Labels (${#skipped_labels[@]})" >> $GITHUB_STEP_SUMMARY
-          if [[ ${#skipped_labels[@]} -gt 0 ]]; then
-            for repo in "${skipped_labels[@]}"; do
-              echo "- \`$repo\` (already exists)" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "_No labels were skipped._" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "## ❌ Failed Labels (${#failed_labels[@]})" >> $GITHUB_STEP_SUMMARY
-          if [[ ${#failed_labels[@]} -gt 0 ]]; then
-            for repo in "${failed_labels[@]}"; do
-              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "_No label creation failures._" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
+          # Save results to step outputs
+          echo "created_labels=${created_labels[*]}" >> $GITHUB_OUTPUT
+          echo "skipped_labels=${skipped_labels[*]}" >> $GITHUB_OUTPUT
+          echo "failed_labels=${failed_labels[*]}" >> $GITHUB_OUTPUT
 
       - name: Create release branches
         run: |
@@ -156,7 +129,12 @@ jobs:
 
           pbranch="release/vault-${{ inputs.version }}"
 
-          # Initialize arrays to track results
+          # Read label results from previous step outputs
+          IFS=' ' read -ra created_labels <<< "${{ steps.labels.outputs.created_labels }}"
+          IFS=' ' read -ra skipped_labels <<< "${{ steps.labels.outputs.skipped_labels }}"
+          IFS=' ' read -ra failed_labels <<< "${{ steps.labels.outputs.failed_labels }}"
+
+          # Initialize arrays to track branch results
           created_branches=()
           skipped_branches=()
           failed_branches=()
@@ -206,9 +184,6 @@ jobs:
 
             echo "::debug::Cloning $repo repository"
             
-            # Use a flag to track if this iteration fails
-            branch_failed=false
-            
             if ! git clone --depth 1 "https://github.com/$repo.git" "$temp_dir"; then
               failed_branches+=("$repo (clone failed)")
               continue
@@ -249,37 +224,58 @@ jobs:
             rm -rf "$temp_dir"
           done
 
-          # Generate GitHub Job Summary for branches
-          echo "# Branch Creation Summary" >> $GITHUB_STEP_SUMMARY
+          # Combined summary table
+          echo "# Release Branch and Label Creation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## ✅ Successfully Created Branches (${#created_branches[@]})" >> $GITHUB_STEP_SUMMARY
-          if [[ ${#created_branches[@]} -gt 0 ]]; then
-            for repo in "${created_branches[@]}"; do
-              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "_No branches were created._" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "## ⏭️ Skipped Branches (${#skipped_branches[@]})" >> $GITHUB_STEP_SUMMARY
-          if [[ ${#skipped_branches[@]} -gt 0 ]]; then
-            for repo in "${skipped_branches[@]}"; do
-              echo "- \`$repo\` (already exists)" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "_No branches were skipped._" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "## ❌ Failed Branches (${#failed_branches[@]})" >> $GITHUB_STEP_SUMMARY
-          if [[ ${#failed_branches[@]} -gt 0 ]]; then
-            for repo in "${failed_branches[@]}"; do
-              echo "- \`$repo\`" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "_No branch creation failures._" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "| Plugin Repository | Labels | Branches |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------------------|--------|----------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Create status maps for the combined table
+          declare -A label_status_map
+          declare -A branch_status_map
+          
+          # Populate label status map
+          for repo in "${created_labels[@]}"; do
+            label_status_map["$repo"]="✅ Successful"
+          done
+          for repo in "${skipped_labels[@]}"; do
+            label_status_map["$repo"]="⏭️ Skipped"
+          done
+          for repo in "${failed_labels[@]}"; do
+            label_status_map["$repo"]="❌ Failed"
+          done
+          
+          # Populate branch status map
+          for repo in "${created_branches[@]}"; do
+            branch_status_map["$repo"]="✅ Successful"
+          done
+          for repo in "${skipped_branches[@]}"; do
+            branch_status_map["$repo"]="⏭️ Skipped"
+          done
+          for failed_item in "${failed_branches[@]}"; do
+            # Extract repo name (everything before the first space or parenthesis)
+            repo="${failed_item%% *}"
+            branch_status_map["$repo"]="❌ Failed"
+          done
+          
+          # Generate combined table
+          for plugin in $plugins; do
+            if [[ -z "$plugin" ]]; then
+              continue
+            fi
+            
+            repo=$(yq eval "to_entries | map(select(.key | downcase == \"$plugin\")) | .[0].value.repository" plugins.yaml)
+            if [[ "$repo" == "null" ]] || [[ -z "$repo" ]]; then
+              repo="prathic-hashicorp/$plugin"
+            else
+              repo="prathic-hashicorp/$repo"
+            fi
+            
+            label_status="${label_status_map[$repo]:-❓ Unknown}"
+            branch_status="${branch_status_map[$repo]:-❓ Unknown}"
+            
+            echo "| \`$repo\` | $label_status | $branch_status |" >> $GITHUB_STEP_SUMMARY
+          done
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Exit with error if there were any failures
